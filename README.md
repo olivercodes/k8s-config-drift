@@ -14,6 +14,9 @@ Currently it has a single command, replicaDrift, which takes one argument (name 
 config-drift replicaDrift --deployment <deployment-name>
 ```
 
+![image](https://user-images.githubusercontent.com/6577282/114342966-e2be8300-9b2a-11eb-99c0-e8c5dda17f11.png)
+
+
 ### Build
 
 ```
