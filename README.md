@@ -17,7 +17,7 @@ config-drift replicaDrift --deployment <deployment-name>
 ### Build
 
 ```
-go build -o k8s-config-drift .
+go build ./cmd/k8s-config-drift
 ```
 
 ### Run
