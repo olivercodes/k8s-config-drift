@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -18,30 +17,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 )
-
-// Create a new type for a list of Strings
-type stringList []string
-
-// Implement the flag.Value interface
-func (s *stringList) String() string {
-	return fmt.Sprintf("%v", *s)
-}
-
-func (s *stringList) Set(value string) error {
-	*s = strings.Split(value, ",")
-	return nil
-}
-
-// Find takes a slice and looks for an element in it. If found it will
-// return it's key, otherwise it will return -1 and a bool of false.
-func Find(slice []string, val string) (int, bool) {
-	for i, item := range slice {
-		if item == val {
-			return i, true
-		}
-	}
-	return -1, false
-}
 
 func main() {
 
@@ -63,7 +38,7 @@ func main() {
 	// os.Arg[0] is the main command
 	// os.Arg[1] will be the subcommand
 	if len(os.Args) < 2 {
-		fmt.Println("deployment name is required")
+		log.Errorf("Deployment name is required")
 		os.Exit(1)
 	}
 
@@ -130,16 +105,28 @@ func getDeployment(clientset *kubernetes.Clientset, deploymentName string, names
 }
 
 func getDeploymentAllNamespaces(clientset *kubernetes.Clientset, deploymentName string) []appsv1.Deployment {
-	ns := getClusterNamespaces(clientset)
+
+	ns, err := getClusterNamespaces(clientset)
+	// If we can't get namespaces from cluster, there's no reason to continue
+	if err != nil {
+		log.Fatalf("%v", err.Error())
+		panic(err.Error())
+	}
+
 	var deployments []appsv1.Deployment
 
 	for _, namespace := range ns {
 
 		deployment, err := getDeployment(clientset, deploymentName, namespace)
-
 		if errors.IsNotFound(err) {
-			log.Infof("not found in namespace %s", namespace)
+			log.Infof("Deployment %s not found in namespace %s", deployment, namespace)
+		} else if statusError, isStatus := err.(*errors.StatusError); isStatus {
+			log.Errorf("Error getting deployment %s in namespace %s: %v \n ",
+				deploymentName, namespace, statusError.ErrStatus.Message)
+		} else if err != nil {
+			panic(err.Error())
 		} else {
+			log.Infof("Found deployment %s in namespace %s \n", deploymentName, namespace)
 			deployments = append(deployments, *deployment)
 		}
 
@@ -148,28 +135,56 @@ func getDeploymentAllNamespaces(clientset *kubernetes.Clientset, deploymentName 
 }
 
 func getConfigMapAllNamespaces(clientset *kubernetes.Clientset, configMapName string) []*v1.ConfigMap {
-	ns := getClusterNamespaces(clientset)
+
+	ns, err := getClusterNamespaces(clientset)
+	if err != nil {
+		log.Fatalf("%s", err.Error())
+		panic(err.Error())
+	}
+
 	var configMaps []*v1.ConfigMap
-	for index, value := range ns {
-		cm, _ := clientset.CoreV1().ConfigMaps(value).Get(context.TODO(), configMapName, metav1.GetOptions{})
-		configMaps[index] = cm
+	for index, namespace := range ns {
+
+		cm, err := clientset.CoreV1().ConfigMaps(namespace).Get(context.TODO(), configMapName, metav1.GetOptions{})
+		if errors.IsNotFound(err) {
+			log.Infof("Configmap %s not found in namespace %s", configMapName, namespace)
+		} else if statusError, isStatus := err.(*errors.StatusError); isStatus {
+			// While we log the error, we don't halt. This is because, it's likely that the user did not have permissions for that
+			// particular namespace. TODO - Add ability to exclude certain namespaces
+			log.Errorf("Error getting deployment %s in namespace %s: %v \n ",
+				configMapName, namespace, statusError.ErrStatus.Message)
+		} else if err != nil {
+			panic(err.Error())
+		} else {
+			log.Infof("Found configmap %s in namespace %s \n", configMapName, namespace)
+			configMaps[index] = cm
+		}
+
 	}
 	return configMaps
 }
 
 // Get all namespaces in the cluster
-func getClusterNamespaces(clientset *kubernetes.Clientset) []string {
-	namespaces, _ := clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
+func getClusterNamespaces(clientset *kubernetes.Clientset) ([]string, error) {
+	namespaces, err := clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
 	var c []string
 	for _, value := range namespaces.Items {
 		c = append(c, value.Name)
 	}
-	return c
+
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // Given a Kubernetes connection, get all configmap names for provided namespace
 func getConfigMapNames(clientset *kubernetes.Clientset, namespace string) []string {
-	configmaps, _ := clientset.CoreV1().ConfigMaps(namespace).List(context.TODO(), metav1.ListOptions{})
+	configmaps, err := clientset.CoreV1().ConfigMaps(namespace).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		panic(err.Error())
+	}
+
 	var c []string
 	for _, value := range configmaps.Items {
 		c = append(c, value.Name)
